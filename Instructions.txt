@@ -1,0 +1,26 @@
+dans un Terminal(1):
+cd Documents
+git clone https://github.com/vanderschuea/test_interop.git
+(seulement la première fois, après il suffit de faire cd Documents/test_interop)
+ssh <nom_d_utilisateur>@studssh.info.ucl.ac.be
+ssh permeke
+cd Documents
+mkdir Project
+
+dans un autre Terminal(2):
+cd <Dossier_avec_le_projet>
+scp -r * <nom_d_utilisateur>@studssh.info.ucl.ac.be:Documents/Project/
+
+dans Term(1):
+cd Projet
+make
+
+dans Term(2)
+scp <nom_d_utilisateur>@studssh.info.ucl.ac.be:Documents/Project/receiver .
+scp <nom_d_utilisateur>@studssh.info.ucl.ac.be:Documents/Project/sender .
+
+
+
+git add Anso_s-Antoine_r/* Anso_s-Victor_r/* Victor_s-Antoine_r/* Victor_s-Anso_r/* Antoine_s-Victor_r/* Antoine_s-Anso_r/* 
+#Efface les dossiers sans ton nom dans la liste
+
