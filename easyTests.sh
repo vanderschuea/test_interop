@@ -22,7 +22,7 @@ spinner(){
 	local pid=$1
 	local max=$2
 	local TIMING=$((30 * $max))
-	local delay=0.03
+	local delay=0.5
 	local zero=0
 	local spinstr='|/~\'
 	printf " [      ] \b\b\b\b\b\b\b\b"
@@ -171,20 +171,20 @@ echo "-----These are our tests for our connection interface" > easyLog.txt
    reset
    
    # Closest simulation to really shitty network
-#   echo "Test9: Transfer with big delay an packet tampering on big file"
-#   reset
-#   ./link_sim -p 64321 -P 64512  -d 1000 -j 50 -e 15 -c 25 -l 15 2>/dev/null 1>/dev/null &
-#   ./receiver :: 64512 -f big2.jpg 2>Logs/test9_rec.txt &
-#   sleep 0.5 && ./sender ::1 64321 -f big.jpg 2>Logs/test_9sen.txt &
-#   spinner $! 200
-#   chmod +r big2.jpg
-#   if ( diff big.jpg big2.jpg > /dev/null ); then
-#      echo "Passed test with harsh network simulation on big picture" >> easyLog.txt
-#   else
-#      echo "Failed test with harsh network simulation on big picture" >> easyLog.txt
-#      contErr
-#   fi
-#   reset
+   # echo "Test9: Transfer with big delay an packet tampering on big file"
+   # reset
+   # ./link_sim -p 64321 -P 64512  -d 1000 -j 50 -e 15 -c 25 -l 15 2>/dev/null 1>/dev/null &
+   # ./receiver :: 64512 -f big2.jpg 2>Logs/test9_rec.txt &
+   # sleep 0.5 && ./sender ::1 64321 -f big.jpg 2>Logs/test9_sen.txt &
+   # spinner $! 300
+   # chmod +r big2.jpg
+   # if ( diff big.jpg big2.jpg > /dev/null ); then
+   #    echo "Passed test with harsh network simulation on big picture" >> easyLog.txt
+   # else
+   #    echo "Failed test with harsh network simulation on big picture" >> easyLog.txt
+   #    contErr
+   # fi
+   # reset
 
    # Printing test results
    echo "----------These are the test results"
