@@ -1,0 +1,259 @@
+#include <string.h>
+#include <stdio.h>
+#include <stddef.h> 
+#include <stdlib.h>
+#include <ctype.h>
+#include <zlib.h>
+
+#include "packet_implem.h"
+
+typedef unsigned char Bytef;
+
+/*---------------------------------------------------------------------------------
+				METHODES SUPPLEMENTAIRES
+---------------------------------------------------------------------------------*/
+
+struct  __attribute__((__packed__)) typeAndWin{
+  ptypes_t type : 3;
+  uint8_t window : 5;
+};
+typedef struct typeAndWin typeAndWin_t; 
+
+/*
+thirdFirstbits permet d'isoler les 3 premiers bits d'un char et de les stocker sous forme d'un ptypes_t qu'elle renvoit 
+*/
+ptypes_t thirdFirstBits(char byte, typeAndWin_t* s){
+
+    unsigned local = byte>>5; 
+    unsigned frame = 0b00000111;
+    s->type = local & frame; 
+    return s->type;
+
+}
+
+/*
+thirdFirstbits permet d'isoler les 5 derniers bits d'un char et de les stocker sous forme d'un unint8_t qu'elle renvoit 
+*/
+uint8_t fifthLastBits(char byte,typeAndWin_t* s){
+
+    unsigned local = byte; 
+    unsigned frame = 0b00011111;
+    s->window = local & frame; 
+	return  s->window;
+}
+
+/*---------------------------------------------------------------------------------
+				METHODES D'INITIALISATION ET DE SUPRESSION D'UN PKT
+---------------------------------------------------------------------------------*/
+
+pkt_t* pkt_new(){
+    pkt_t* newpkt= malloc(sizeof(pkt_t));
+    if(newpkt==NULL){
+   		fprintf(stderr, "pkt_new()\n");
+   		exit(-1);
+    }
+    newpkt->payload= NULL;
+	//Obligation de declarer le tout, sinon bug durant comparaisons
+	newpkt->type = 0;
+	newpkt->window= 0;
+    newpkt->seqnum = 0;
+    newpkt->length = 0;
+    newpkt->crc = 0;
+    return newpkt;
+}
+
+/*void pkt_copy(pkt_t *dest, pkt_t *src){ //utile?
+	pkt_set_type(dest, src->type);
+	pkt_set_seqnum(dest, src->seqnum);
+	pkt_set_window(dest, src->window);
+	pkt_set_payload(dest, src->payload, src->length);
+	dest->crc= src->crc;
+	//memcpy((void *) paq1, (void *) paq2, sizeof(paq2));
+	pkt_del(src);
+}*/
+
+void pkt_del(pkt_t *packet){
+	if(packet!=NULL){
+		if(packet->payload!=NULL)
+			free((void *) packet->payload);
+		free(packet);
+	}
+}
+
+/*---------------------------------------------------------------------------------
+				PKT_DECODE
+---------------------------------------------------------------------------------*/
+/*
+ * Decode les donnees recues et creee un nouveau pkt_t a partir de celles ci.
+ * Le paquet recu est ordonne par octet-reseau.
+ * Cette fonction effectue les verifications suivantes:
+ * - Valide le CRC32 des donnees recues avec celui a la fin de la suite de donnees
+ * - Valide le type du paquet
+ * - Valide la longueur du paquet
+ * 
+ * @data: La suite d'octets qui constitue le paquet
+ * @len: Le nombre d'octets recues
+ * @pkt: Une structure pkt allouee, ou les donnees decodees doivent etre stockees
+ *
+ * @return: Un code d'etat indicant le succes ou le type d'echec.
+ *     A moins que l'erreur soit E_NOHEADER, le paquet a au moins les valeurs de l'entête trouve dans le flux de donnees.
+ */
+pkt_status_code pkt_decode(const char *data, const size_t len, pkt_t *packet) {
+	if(len<4)
+		return E_NOHEADER;
+	if(len>MAX_PAYLOAD_SIZE+8)
+		return E_NOMEM;
+	uint8_t typWin= data[0];
+	ptypes_t type= (ptypes_t) (typWin >> 5);
+	uint8_t window= (uint8_t) (typWin & 31);
+	uint8_t seqnum= (uint8_t) data[1];
+	uint16_t length= (unsigned char) data[2]<<8;
+    length|= (unsigned char) data[3];
+    if(length>len)
+    	fprintf(stderr, "length > len\n");
+    if(pkt_set_payload(packet, &data[4], length)!=PKT_OK)
+		return E_NOMEM;
+	uint32_t crc= (unsigned char) data[len-4]<<24;
+	crc|= (unsigned char) data[len-3]<<16;
+	crc|= (unsigned char) data[len-2]<<8;
+	crc|= (unsigned char) data[len-1];
+	if(pkt_set_type(packet, type)!=PKT_OK)
+		return E_TYPE; 
+	if(pkt_set_window(packet, window)!=PKT_OK)
+		return E_WINDOW; 
+	if(pkt_set_seqnum(packet, seqnum)!=PKT_OK)
+		return E_UNCONSISTENT;
+	if(pkt_set_length(packet, length)!=PKT_OK)
+		return E_LENGTH;
+	if(pkt_set_crc(packet, crc)!=PKT_OK)
+		return E_UNCONSISTENT;
+	uint32_t crcCmp= crc32(0x04C11DB7,(Bytef *) data, length+4);
+	//fprintf(stderr, "crc: %d, crc32: %d, len: %d, length: %d\n", crc, crcCmp, (int) len, length);
+	if(crc!=crcCmp)
+		return E_CRC;
+	return PKT_OK;
+}
+
+/*--------------------------------------------------------------------------------
+				PKT_ENCODE
+---------------------------------------------------------------------------------*/
+/*
+ * Converti une structure pkt en une serie d'octets prete a etre envoye via les cables.
+ * (in network byte-order)
+ * incluant le CRC32 de l'entete et le payload du paquet
+ * 
+ * @pkt: La structure contenant les info du paquet a envoyer
+ * @buf: Un buffer pour stocker les resultats de la serie d'octets
+ * @len: Le nombre d'octets qui peuvent etre ecrit dans le buffer
+ * @len-POST: Le nombre d'octets ecrits dans le buffer de la fonction
+ * @return: Un code d'etat indicant le succes ou E_NOMEM si le buffer est trop petit
+ * */
+
+pkt_status_code pkt_encode(const pkt_t* packet, char *buf, size_t *len){
+    if(packet->length > len[0])
+		return E_NOMEM;
+    size_t data_length = packet->length;
+    uint8_t local = packet->type; 
+    buf[0] = (local <<5 )| (packet->window <<0);
+    buf[1] = packet->seqnum;
+    buf[2] = (packet->length >> 8) & 0xFF; 
+    buf[3] = (packet->length >> 0) & 0xFF;
+    size_t reste = data_length%4;
+    size_t add = 0;
+    if (reste != 0)
+		add = 4-reste;
+    size_t i, j;
+    for(i=0; i<data_length; i++)
+		buf[4+i] = packet->payload[i];
+	j= i;
+    for(; i<data_length+add; i++)
+		buf[4+i]= '0';
+	uint32_t crc= crc32(0x04C11DB7,(Bytef *) buf, 4+j);	
+	fprintf(stderr, "crc32: %d\n", crc);
+	buf[4+i]= crc>>24 & 0xFF;
+	buf[5+i]= crc>>16 & 0xFF;
+	buf[6+i]= crc>>8 & 0xFF;
+	buf[7+i]= crc>>0 & 0xFF;
+    len[0] = data_length+8+add;
+    return PKT_OK; 
+}
+
+/*--------------------------------------------------------------------------------
+				METHODES GET
+---------------------------------------------------------------------------------*/
+
+ptypes_t pkt_get_type  (const pkt_t* packet){
+    return packet->type; 
+}
+
+uint8_t  pkt_get_window(const pkt_t* packet){
+    return packet->window; 
+}
+
+uint8_t  pkt_get_seqnum(const pkt_t* packet){
+    return packet->seqnum; 
+}
+
+uint16_t pkt_get_length(const pkt_t* packet){
+    return packet->length; 
+}
+uint32_t pkt_get_crc(const pkt_t* packet){
+    return packet->crc; 
+}
+
+const char* pkt_get_payload(const pkt_t* packet){	
+    return packet->payload;
+}
+
+/*---------------------------------------------------------------------------------
+				METHODES SET
+---------------------------------------------------------------------------------*/
+
+pkt_status_code pkt_set_type(pkt_t *packet, const ptypes_t type) {
+    if (type == PTYPE_DATA || type == PTYPE_ACK || type == PTYPE_NACK){
+		packet->type = type; 
+		return PKT_OK;
+    }
+    return E_TYPE; 
+}
+
+pkt_status_code pkt_set_window(pkt_t *packet, const uint8_t window) {
+    if(window<=MAX_WINDOW_SIZE){
+		packet->window = window; 
+		return PKT_OK;
+    }
+    return E_WINDOW; 
+}
+
+pkt_status_code pkt_set_seqnum(pkt_t *packet, const uint8_t seqnum) {
+    packet->seqnum = seqnum; 
+    return PKT_OK;
+}
+
+pkt_status_code pkt_set_length(pkt_t *packet, const uint16_t length) {
+	if (length <=  MAX_PAYLOAD_SIZE){ 
+		packet->length = length; 
+		return PKT_OK;
+    }
+    return E_LENGTH;
+}
+
+pkt_status_code pkt_set_crc(pkt_t *packet, const uint32_t crc) {
+    packet->crc = crc; 
+    return PKT_OK; 
+}
+
+/* 
+ * Plus facile de considerer data avec le crc (facultatif), et de ne prendre que le payload ici, durant le set_payload, 
+ * vu qu'on connait la longueur de payload grace au parametre length.
+ * ---> pas des plus efficaces quand data ne contient que le payload
+ */
+pkt_status_code pkt_set_payload(pkt_t *packet, const char *data, const uint16_t length) {
+	//size_t i;
+	char *payload= malloc(length*sizeof(char));
+	if(payload==NULL)
+		return E_NOMEM;
+ 	memcpy(payload, data, length);
+	packet->payload= payload;
+    return PKT_OK;
+}
